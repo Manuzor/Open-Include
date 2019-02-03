@@ -1,0 +1,6 @@
+[
+    {
+        "caption":"Open file under cursor",
+        "command": "open_include"
+    }
+]

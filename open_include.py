@@ -20,7 +20,7 @@ IMAGE = re.compile('\.(apng|png|jpg|gif|jpeg|bmp)$', re.I)
 settings = None
 os_specific_settings = None
 
-debug = False
+debug = True
 ST2 = int(sublime.version()) < 3000
 cache = {}
 
@@ -255,7 +255,7 @@ class OpenIncludeThread(threading.Thread):
 
                 path_add.append(extension.get('prefix', '') + path + extension.get('extension', ''))
 
-        return unique(paths + path_add)
+        return unique(paths + path_add), len(path_add)
 
     def expand_paths_with_sub_and_parent_folders(self, window, view, paths):
 
@@ -328,7 +328,7 @@ class OpenIncludeThread(threading.Thread):
                 # remove quotes
                 paths += '\n' + re.sub(';', '', path)
                 # remove :row:col
-                paths += '\n' + re.sub('(\:[0-9]*)+$', '', path).strip()
+                # paths += '\n' + re.sub('(\:[0-9]*)+$', '', path).strip()
                 # replace . for /
                 paths += '\n' + path.replace('./', '.').replace('.', '/')
                 # replace :: for /
@@ -348,7 +348,7 @@ class OpenIncludeThread(threading.Thread):
         if get_setting('use_strict'):
             return self.try_open(window, self.resolve_relative(os.path.dirname(view.file_name()), paths[0]))
 
-        paths = self.expand_paths_with_extensions(window, view, paths)
+        paths, num_added = self.expand_paths_with_extensions(window, view, paths)
         if cache['look_into_folders'] and not skip_folders:
             paths = self.expand_paths_with_sub_and_parent_folders(window, view, paths)
 
@@ -365,8 +365,9 @@ class OpenIncludeThread(threading.Thread):
         debug_info(paths)
         debug_info('-- /resolved paths --')
 
-        if len(paths) > 10:
-            print("-- There are too many paths, probably we shoulnd't open! Path count: %d" % len(paths))
+        threshold = get_setting('path_len_threshold', 10) + num_added
+        if len(paths) > threshold:
+            print("-- There are too many paths, probably we shouldn't open! Path count: %d" % len(paths))
             return False
 
         for path in paths:
@@ -419,6 +420,21 @@ class OpenIncludeThread(threading.Thread):
 
         debug_info('Trying to open: ' + maybe_path)
 
+        row = None
+        col = None # TODO
+        row_regexes = [
+            r':(\d+):(\d+)$',
+            r':(\d+)$',
+            r'\((\d+)\)$',
+        ]
+        for regex in row_regexes:
+            row_regex = re.compile(regex)
+            row_search_result = row_regex.search(maybe_path)
+            if row_search_result is not None:
+                maybe_path = row_regex.sub('', maybe_path)
+                row = int(row_search_result.group(1))
+                break
+
         path_normalized = normalize(maybe_path)
         if path_normalized in cache['checked']:
             return False
@@ -448,7 +464,7 @@ class OpenIncludeThread(threading.Thread):
                 desktop.open(maybe_path)
             else:
                 # Open within ST
-                self.open(window, maybe_path)
+                self.open(window, maybe_path, row, col)
 
         elif maybe_path and ( os_is_dir(maybe_path) or os_is_dir('\\' + maybe_path) ) and not cache['folder'] and cache['folder_save']:
             # Walkaround for UNC path
@@ -521,11 +537,17 @@ class OpenIncludeThread(threading.Thread):
             elif content_type == 'text/xml' or content_type == 'application/xml':
                 view.settings().set('syntax', 'Packages/XML/XML.tmLanguage')
 
-    def open(self, window, path):
+    def open(self, window, path, row=None, col=None):
         if get_setting('in_secondary_colum', False):
             window.run_command('set_layout', {"cols": [0.0, 0.5, 1.0], "rows": [0.0, 1.0], "cells": [[0, 0, 1, 1], [1, 0, 2, 1]]})
             window.focus_group(1)
-        window.open_file(path)
+        if row is not None:
+            encoded_path = path + (':%d' % row)
+            if col is not None:
+                encoded_path += (':%d' % col)
+            window.open_file(encoded_path, sublime.ENCODED_POSITION)
+        else:
+            window.open_file(path)
 
 class OpenIncludeFindInFileGoto():
     def run(self, view):
